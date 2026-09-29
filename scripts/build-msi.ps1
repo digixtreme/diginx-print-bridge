@@ -19,7 +19,9 @@ $exe = Join-Path $publish 'DigiNx.PrintBridge.exe'
 if (-not (Test-Path $exe)) { throw "Published bridge executable not found: $exe" }
 Copy-Item $exe (Join-Path $payload 'DigiNx.PrintBridge.exe') -Force
 
-wix build (Join-Path $root 'installer\DigiNx.PrintBridge.wxs') -arch x64 -o $msi
+$installer = Join-Path $root 'installer'
+$wxs = Join-Path $installer 'DigiNx.PrintBridge.wxs'
+wix build $wxs -arch x64 -bindpath $installer -o $msi
 if (-not (Test-Path $msi)) { throw "MSI was not created: $msi" }
 
 $hash = (Get-FileHash $msi -Algorithm SHA256).Hash.ToLowerInvariant()
