@@ -11,7 +11,7 @@ namespace DigiNx.PrintBridge;
 internal static class Program
 {
     private const string Protocol = "1";
-    private const string Version = "1.1.0";
+    private const string Version = "1.0.0";
 
     [STAThread]
     private static void Main(string[] args)
@@ -33,34 +33,11 @@ internal static class Program
             config = BridgeConfig.Load();
         }
 
-        using var openSignal = new EventWaitHandle(false, EventResetMode.AutoReset, "DigiNx.PrintBridge.OpenStatus");
         using var mutex = new Mutex(true, "DigiNx.PrintBridge.Singleton", out var isFirstInstance);
-        if (!isFirstInstance)
-        {
-            openSignal.Set();
-            return;
-        }
+        if (!isFirstInstance) return;
         using var engine = new PrintEngine();
         var registry = new JobRegistry();
         WebApplication? server = null;
-        using var statusForm = new StatusForm(config, engine, registry);
-        using var trayIcon = new NotifyIcon
-        {
-            Icon = SystemIcons.Application,
-            Text = "DigiNx Print Bridge - Starting",
-            Visible = true,
-        };
-        var trayMenu = new ContextMenuStrip();
-        trayMenu.Items.Add("Open DigiNx Print Bridge", null, (_, _) => statusForm.ShowStatus());
-        trayMenu.Items.Add("Configure POS URL", null, (_, _) => { using var setup = new SetupForm(config); setup.ShowDialog(); });
-        trayMenu.Items.Add(new ToolStripSeparator());
-        trayMenu.Items.Add("Exit", null, (_, _) => Application.Exit());
-        trayIcon.ContextMenuStrip = trayMenu;
-        trayIcon.DoubleClick += (_, _) => statusForm.ShowStatus();
-        var openSignalRegistration = ThreadPool.RegisterWaitForSingleObject(openSignal, (_, _) =>
-        {
-            try { statusForm.BeginInvoke((Action)(() => statusForm.ShowStatus())); } catch { }
-        }, null, Timeout.Infinite, false);
 
         var bootstrap = new Form
         {
@@ -81,15 +58,12 @@ internal static class Program
                 await server.StartAsync();
                 File.WriteAllText(Path.Combine(BridgeConfig.ConfigDirectory, "bridge.log"),
                     $"{DateTimeOffset.Now:u} DigiNx Print Bridge {Version} listening on http://{config.Host}:{config.Port}\r\n");
-                statusForm.SetServerState(true);
-                trayIcon.Text = "DigiNx Print Bridge - Running";
             }
             catch (Exception ex)
             {
                 File.WriteAllText(Path.Combine(BridgeConfig.ConfigDirectory, "startup-error.log"), ex.ToString());
-                statusForm.SetServerState(false, ex.Message);
-                trayIcon.Text = "DigiNx Print Bridge - Error";
-                statusForm.ShowStatus();
+                MessageBox.Show($"DigiNx Print Bridge could not start.\n\n{ex.Message}", "DigiNx Print Bridge", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                Application.Exit();
             }
         };
 
@@ -101,8 +75,6 @@ internal static class Program
         };
 
         Application.Run(bootstrap);
-        openSignalRegistration.Unregister(null);
-        trayIcon.Visible = false;
     }
 
     private static WebApplication BuildServer(BridgeConfig config, PrintEngine engine, JobRegistry registry)
