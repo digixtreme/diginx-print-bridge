@@ -2,7 +2,7 @@
   <Package
     Name="DigiNx Print Bridge"
     Manufacturer="DigiXtreme Technology Solutions"
-    Version="1.1.0"
+    Version="1.2.0"
     UpgradeCode="{E140994B-8468-4F02-99B3-E9AB5F59D9EE}"
     Scope="perUser"
     InstallerVersion="500"

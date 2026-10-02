@@ -11,7 +11,7 @@ namespace DigiNx.PrintBridge;
 internal static class Program
 {
     private const string Protocol = "1";
-    private const string Version = "1.1.0";
+    private const string Version = "1.2.0";
 
     [STAThread]
     private static void Main(string[] args)
@@ -180,31 +180,78 @@ internal static class Program
                 await Json(ctx, 400, new { status = "failed", errorCode = "INVALID_PRINT_COMMAND" });
                 return;
             }
-            if (registry.TryGet(body.commandId, out var existing) && existing is not null)
+
+            var copies = Math.Clamp(body.copies <= 0 ? 1 : body.copies, 1, 10);
+            var accepted = new PrintJob(
+                "accepted",
+                body.commandId,
+                body.receiptId,
+                body.receiptNumber,
+                body.printerId,
+                copies,
+                DateTimeOffset.UtcNow,
+                null,
+                null
+            );
+
+            if (!registry.TryAccept(accepted, out var current))
             {
-                await Json(ctx, 200, existing);
-                return;
-            }
-            if (!PrinterCatalog.Exists(body.printerId))
-            {
-                await Json(ctx, 404, new { status = "failed", errorCode = "PRINTER_NOT_FOUND", body.commandId, body.receiptId });
+                await Json(ctx, 200, current);
                 return;
             }
 
-            var copies = Math.Clamp(body.copies <= 0 ? 1 : body.copies, 1, 10);
-            var result = await engine.PrintHtmlAsync(body.printerId, body.printableHtml, copies, config.PrintTimeoutSeconds);
-            if (result != CoreWebView2PrintStatus.Succeeded)
+            if (!PrinterCatalog.Exists(body.printerId))
             {
-                await Json(ctx, 503, new { status = "failed", errorCode = $"PRINT_{result.ToString().ToUpperInvariant()}", body.commandId, body.receiptId });
+                registry.MarkFailed(body.commandId, "PRINTER_NOT_FOUND");
+                registry.TryGet(body.commandId, out var failed);
+                await Json(ctx, 200, failed ?? accepted with { status = "failed", errorCode = "PRINTER_NOT_FOUND", processedAt = DateTimeOffset.UtcNow });
                 return;
             }
-            var job = new CompletedJob("printed", body.commandId, body.receiptId, body.receiptNumber, body.printerId, copies, DateTimeOffset.UtcNow);
-            registry.Add(job);
+
+            _ = ProcessReceiptPrintJobAsync(engine, registry, config, body, copies);
+            registry.TryGet(body.commandId, out var started);
+            await Json(ctx, StatusCodes.Status202Accepted, started ?? accepted);
+        });
+
+        app.MapGet("/v1/jobs/{commandId}", async ctx =>
+        {
+            if (!ProtocolAllowed(ctx, false)) { await Json(ctx, 400, new { status = "failed", errorCode = "PRINT_PROTOCOL_MISMATCH" }); return; }
+            var commandId = ctx.Request.RouteValues["commandId"]?.ToString();
+            if (string.IsNullOrWhiteSpace(commandId) || !registry.TryGet(commandId, out var job) || job is null)
+            {
+                await Json(ctx, 404, new { status = "unknown", errorCode = "PRINT_JOB_NOT_FOUND", commandId });
+                return;
+            }
             await Json(ctx, 200, job);
         });
 
         app.MapFallback(async ctx => await Json(ctx, 404, new { errorCode = "NOT_FOUND" }));
         return app;
+    }
+
+    private static async Task ProcessReceiptPrintJobAsync(
+        PrintEngine engine,
+        JobRegistry registry,
+        BridgeConfig config,
+        ReceiptPrintRequest body,
+        int copies)
+    {
+        registry.MarkPrinting(body.commandId);
+        try
+        {
+            var result = await engine.PrintHtmlAsync(body.printerId, body.printableHtml, copies, config.PrintTimeoutSeconds);
+            if (result == CoreWebView2PrintStatus.Succeeded)
+            {
+                registry.MarkPrinted(body.commandId);
+                return;
+            }
+            registry.MarkFailed(body.commandId, $"PRINT_{result.ToString().ToUpperInvariant()}");
+        }
+        catch (Exception ex)
+        {
+            var code = string.IsNullOrWhiteSpace(ex.Message) ? "PRINT_ENGINE_FAILED" : ex.Message.Trim();
+            registry.MarkFailed(body.commandId, code);
+        }
     }
 
     private static bool ProtocolAllowed(HttpContext ctx, bool allowNavigationWithoutOrigin)

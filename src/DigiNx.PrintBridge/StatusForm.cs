@@ -108,7 +108,9 @@ internal sealed class StatusForm : Form
         testButton.Enabled = serverRunning && printerCombo.Items.Count > 0;
 
         var recent = registry.Recent(1).FirstOrDefault();
-        lastPrintValue.Text = recent is null ? "No completed POS print in this session" : $"{recent.receiptNumber} · {recent.printerId} · {recent.processedAt.ToLocalTime():dd/MM/yyyy hh:mm tt}";
+        lastPrintValue.Text = recent is null
+            ? "No POS print job in this session"
+            : $"{recent.receiptNumber} · {recent.printerId} · {recent.status} · {(recent.processedAt ?? recent.acceptedAt).ToLocalTime():dd/MM/yyyy hh:mm tt}";
     }
 
     private async Task TestPrintAsync()
@@ -152,7 +154,7 @@ internal sealed class StatusForm : Form
     {
         var printers = PrinterCatalog.List();
         var recent = registry.Recent(1).FirstOrDefault();
-        var text = $"DigiNx Print Bridge 1.1.0\r\nStatus: {(serverRunning ? "Running" : "Not running")}\r\nListener: http://{config.Host}:{config.Port}\r\nConfigured POS origins: {string.Join(", ", config.AllowedOrigins)}\r\nInstalled printers: {string.Join(", ", printers.Select(p => p.printerId))}\r\nLast POS print: {(recent is null ? "None in this session" : $"{recent.receiptNumber} / {recent.printerId} / {recent.processedAt.ToLocalTime():u}")}\r\nError: {serverError ?? "None"}";
+        var text = $"DigiNx Print Bridge 1.2.0\r\nStatus: {(serverRunning ? "Running" : "Not running")}\r\nListener: http://{config.Host}:{config.Port}\r\nConfigured POS origins: {string.Join(", ", config.AllowedOrigins)}\r\nInstalled printers: {string.Join(", ", printers.Select(p => p.printerId))}\r\nLast POS print: {(recent is null ? "None in this session" : $"{recent.receiptNumber} / {recent.printerId} / {recent.status} / {(recent.processedAt ?? recent.acceptedAt).ToLocalTime():u}")}\r\nError: {serverError ?? "None"}";
         Clipboard.SetText(text);
         actionLabel.ForeColor = Color.SeaGreen;
         actionLabel.Text = "Diagnostics copied to clipboard.";
